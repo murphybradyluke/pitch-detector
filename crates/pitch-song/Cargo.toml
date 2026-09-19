@@ -1,0 +1,11 @@
+[package]
+name = "pitch-song"
+description = "Reference songs for play-along: MIDI import, monophonic reduction, scoring"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Pure Rust, no platform code, so it compiles to wasm32 like pitch-core.
+midly = "0.5"

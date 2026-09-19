@@ -1,7 +1,9 @@
 // Runs on the audio rendering thread. Forwards each 128-sample block of the
-// first input channel to a MessagePort handed over from the main thread. The
-// detector itself runs in a Worker, not here: the AudioWorklet global scope
-// lacks fetch and TextDecoder, which the wasm-bindgen glue needs.
+// first input channel to a MessagePort handed over from the main thread,
+// stamped with the audio-clock time at the end of the block so readings can
+// be placed on the same clock the click track is scheduled on. The detector
+// itself runs in a Worker, not here: the AudioWorklet global scope lacks
+// fetch and TextDecoder, which the wasm-bindgen glue needs.
 class CaptureProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
@@ -16,7 +18,7 @@ class CaptureProcessor extends AudioWorkletProcessor {
     if (channel && this.out) {
       // Copy: the input buffer is reused by the audio engine.
       const block = new Float32Array(channel);
-      this.out.postMessage(block, [block.buffer]);
+      this.out.postMessage({ t: currentTime + block.length / sampleRate, s: block }, [block.buffer]);
     }
     return true;
   }

@@ -7,40 +7,84 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2214%22 font-size=%2214%22>🎸</text></svg>" />
   <style>
     :root {
-      --bg: #111; --fg: #eee; --dim: #888; --ok: #4caf50; --warn: #ffb300; --bad: #e53935;
+      --bg: #111; --fg: #eee; --dim: #888; --ok: #4caf50; --warn: #ffb300; --bad: #e53935; --accent: #42a5f5;
       color-scheme: dark;
     }
     body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg);
-           display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 16px; box-sizing: border-box; }
-    header { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
-    select, button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid #444; background: #222; color: var(--fg); }
+           display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 16px; box-sizing: border-box; gap: 8px; }
+    header, .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
+    select, button, input[type=number] { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid #444; background: #222; color: var(--fg); }
+    input[type=number] { width: 5em; padding: 6px; }
     button.on { background: var(--bad); border-color: var(--bad); }
-    #note { font-size: clamp(96px, 30vw, 220px); font-weight: 700; line-height: 1; margin: 24px 0 8px; min-height: 1em; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #000; }
+    button:disabled { opacity: 0.4; }
+    label { display: inline-flex; gap: 6px; align-items: center; color: var(--dim); }
+    .tabs { display: flex; gap: 4px; margin-top: 4px; }
+    .tabs button { border-radius: 8px 8px 0 0; border-bottom: none; }
+    .tabs button.active { background: #333; color: var(--fg); }
+    section { display: none; flex-direction: column; align-items: center; width: 100%; gap: 8px; }
+    section.active { display: flex; }
+
+    /* Tuner */
+    #note { font-size: clamp(96px, 30vw, 220px); font-weight: 700; line-height: 1; margin: 16px 0 0; min-height: 1em; }
     #note.flat, #note.sharp { color: var(--warn); }
     #note.ok { color: var(--ok); }
     #note.held { opacity: 0.45; }
-    #meter { width: min(90vw, 600px); height: 24px; position: relative; background: #222; border-radius: 12px; margin: 8px 0; overflow: hidden; }
+    #meter { width: min(90vw, 600px); height: 24px; position: relative; background: #222; border-radius: 12px; overflow: hidden; }
     #meter .center { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: #666; }
     #meter .needle { position: absolute; top: 0; bottom: 0; width: 6px; margin-left: -3px; background: var(--fg); border-radius: 3px;
                      left: 50%; transition: left 80ms linear; }
     #meter .zone { position: absolute; top: 0; bottom: 0; left: 45%; width: 10%; background: rgba(76,175,80,.25); }
     .row { display: flex; gap: 24px; color: var(--dim); font-variant-numeric: tabular-nums; flex-wrap: wrap; justify-content: center; }
-    #level { width: min(90vw, 600px); height: 6px; background: #222; border-radius: 3px; overflow: hidden; margin-top: 16px; }
+    #level { width: min(90vw, 600px); height: 6px; background: #222; border-radius: 3px; overflow: hidden; }
     #level div { height: 100%; width: 0; background: var(--dim); }
-    #status { color: var(--dim); margin-top: 24px; text-align: center; max-width: 600px; }
+    #status { color: var(--dim); text-align: center; max-width: 600px; }
+
+    /* Play-along */
+    #roll { width: min(96vw, 900px); height: 220px; background: #181818; border-radius: 8px; display: block; }
+    #songinfo { color: var(--dim); text-align: center; }
+    #scoreline { font-size: 28px; font-variant-numeric: tabular-nums; }
+    #scoreline .hit { color: var(--ok); } #scoreline .miss { color: var(--bad); }
+    #target { font-size: 48px; font-weight: 700; min-height: 1.2em; }
+    #target .next { font-size: 20px; color: var(--dim); font-weight: 400; margin-left: 16px; }
+    #countin { font-size: 64px; font-weight: 700; color: var(--accent); min-height: 1.2em; }
   </style>
 </head>
 <body>
   <header>
     <select id="instrument"></select>
-    <label>A4 <input id="a4" type="number" value="440" min="415" max="466" step="1" style="width:5em;font:inherit;padding:6px;border-radius:8px;border:1px solid #444;background:#222;color:var(--fg)"></label>
+    <label>A4 <input id="a4" type="number" value="440" min="415" max="466" step="1"></label>
     <button id="start">Start</button>
   </header>
-  <div id="note">–</div>
-  <div id="meter"><div class="zone"></div><div class="center"></div><div class="needle"></div></div>
-  <div class="row"><span id="cents">0 ¢</span><span id="freq">0.0 Hz</span><span id="conf"></span></div>
   <div id="level"><div></div></div>
   <div id="status">Pick an instrument and press Start. Allow microphone access when asked.</div>
+
+  <div class="tabs">
+    <button id="tab-tuner" class="active">Tuner</button>
+    <button id="tab-song">Play along</button>
+  </div>
+
+  <section id="tuner" class="active">
+    <div id="note">–</div>
+    <div id="meter"><div class="zone"></div><div class="center"></div><div class="needle"></div></div>
+    <div class="row"><span id="cents">0 ¢</span><span id="freq">0.0 Hz</span><span id="conf"></span></div>
+  </section>
+
+  <section id="song">
+    <div class="controls">
+      <input id="midifile" type="file" accept=".mid,.midi,audio/midi" />
+      <select id="track" disabled></select>
+      <label><input id="hear" type="checkbox" checked> hear the part</label>
+      <label><input id="click" type="checkbox" checked> click</label>
+      <button id="play" class="primary" disabled>Play</button>
+    </div>
+    <div id="songinfo">Load a MIDI file, pick the bass track, press Play. Four clicks count you in.</div>
+    <div id="countin"></div>
+    <div id="target"></div>
+    <canvas id="roll"></canvas>
+    <div id="scoreline"></div>
+  </section>
+
   <script type="module" src="./main.js"></script>
 </body>
 </html>

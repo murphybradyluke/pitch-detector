@@ -11,4 +11,5 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 pitch-core = { path = "../pitch-core" }
+pitch-song = { path = "../pitch-song" }
 wasm-bindgen = "0.2"

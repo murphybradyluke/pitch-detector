@@ -1,14 +1,17 @@
 # pitch-detector
 
-Real-time monophonic pitch detection for a tuner and, later, a play-along note
-checker. The core is a dependency-free Rust crate so it can be compiled to WASM
-for the web and reused on iOS and Android.
+Real-time monophonic pitch detection for a tuner and a play-along note checker
+that scores you against a MIDI file. The core is a dependency-free Rust crate
+so it can be compiled to WASM for the web and reused on iOS and Android.
 
 ## Layout
 
 ```
 crates/pitch-core/   pure detection library (no I/O, no platform code)
-crates/pitch-wasm/   wasm-bindgen wrapper: Tracker, Reading, instrument_names()
+crates/pitch-song/   reference songs: MIDI import, chord reduction, scorer
+  src/midi.rs        Standard MIDI File -> per-track NoteEvents with a tempo map
+  src/scorer.rs      judges each target note from the stream of readings
+crates/pitch-wasm/   wasm-bindgen wrapper: Tracker, Reading, Song, Judge
 web/                 tuner page: AudioWorklet -> Worker (WASM) -> UI
 scripts/e2e.mjs      headless-Chromium end-to-end test with a WAV as the mic
   src/yin.rs         YIN estimator: &[f32] + sample rate -> { frequency, confidence }
@@ -51,6 +54,27 @@ scripts/e2e.mjs      headless-Chromium end-to-end test with a WAV as the mic
   sample is 90 cents and sub-sample interpolation no longer holds 3 cents.
   Presets stop at C7.
 
+## Play-along
+
+Load a `.mid` file, pick a track (bass tracks are picked by default: General
+MIDI programs 32–39, or a track named "bass", or else the lowest track), and
+press Play. Four clicks count you in, then the roll scrolls: grey notes are
+coming, blue is now, green was hit, red was missed, and white dots are what
+the detector heard. "Hear the part" plays the track as a synth. Use
+headphones for that, or the mic scores the synth.
+
+- **Chords collapse to their lowest note** (`pitch_song::monophonic`); the
+  detector is monophonic, and the root is what the ear judges anyway.
+- **Scoring** (`pitch_song::Scorer`): each note has a window from 100 ms
+  before its start to 100 ms after its end. Readings matching the note inside
+  the window accumulate matched time; the note is a hit at 60 ms of matches
+  (or half its duration for shorter notes). Misses record the wrong note
+  heard most often. Times are on the audio clock, and the detector's window
+  centre plus median delay is subtracted, so scoring is on the beat even at
+  100 ms of latency.
+- **Tempo changes** anywhere in the file are honoured; SMPTE-timed files are
+  not supported.
+
 ## Web tuner
 
 Audio path: `getUserMedia` (echo cancellation, noise suppression and auto
@@ -66,15 +90,15 @@ wasm-pack build crates/pitch-wasm --target web --out-dir ../../web/pkg --release
 ```
 
 Query parameters for testing: `?instrument=guitar&autostart=1&debug=1` logs
-every reading to the console.
+every reading to the console; `?smooth=<ms>` sets the display smoothing.
 
 ## Develop
 
 ```
-cargo test                      # unit + synthetic-signal tests
+cargo test                      # unit + synthetic-signal + MIDI/scorer tests
 cargo clippy --all-targets
 cargo fmt
-node scripts/e2e.mjs            # needs the wasm build, the static server, and chromium
+node scripts/e2e.mjs            # tuner + play-along in headless chromium; needs wasm build + server
 ```
 
 Rust is managed with [mise](https://mise.jdx.dev) on the dev machine

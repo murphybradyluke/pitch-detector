@@ -102,3 +102,165 @@ pub fn instrument_names() -> Vec<String> {
         .map(|p| p.name.to_string())
         .collect()
 }
+
+// ---------------------------------------------------------------------------
+// Songs and scoring (play-along)
+// ---------------------------------------------------------------------------
+
+use pitch_song::{monophonic, MidiSong, NoteEvent, Scorer, ScorerOptions};
+
+/// One track of a loaded MIDI file, for a track picker.
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Debug, Clone)]
+pub struct TrackInfo {
+    pub index: usize,
+    pub name: String,
+    pub note_count: usize,
+    pub lowest_midi: u8,
+    pub highest_midi: u8,
+    /// General MIDI program, or -1 when the track never sets one.
+    pub program: i32,
+    pub is_drums: bool,
+}
+
+/// A parsed MIDI file.
+#[wasm_bindgen]
+pub struct Song {
+    inner: MidiSong,
+}
+
+#[wasm_bindgen]
+impl Song {
+    #[wasm_bindgen(constructor)]
+    pub fn new(bytes: &[u8]) -> Result<Song, JsError> {
+        MidiSong::parse(bytes)
+            .map(|inner| Song { inner })
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    pub fn tracks(&self) -> Vec<TrackInfo> {
+        self.inner
+            .tracks()
+            .iter()
+            .map(|t| TrackInfo {
+                index: t.index,
+                name: t.name.clone(),
+                note_count: t.note_count,
+                lowest_midi: t.lowest_midi,
+                highest_midi: t.highest_midi,
+                program: t.program.map(|p| p as i32).unwrap_or(-1),
+                is_drums: t.is_drums,
+            })
+            .collect()
+    }
+
+    /// Monophonic events of a track as a flat array: `[midi, start, duration]`
+    /// per note, times in seconds. Chords collapse to their lowest note.
+    pub fn events(&self, track: usize, chord_window_secs: f32) -> Vec<f32> {
+        monophonic(self.inner.events(track), chord_window_secs)
+            .iter()
+            .flat_map(|e| [e.midi as f32, e.start_secs, e.duration_secs])
+            .collect()
+    }
+
+    pub fn beat_times(&self) -> Vec<f32> {
+        self.inner.beat_times()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn duration_secs(&self) -> f32 {
+        self.inner.duration_secs()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn initial_bpm(&self) -> f32 {
+        self.inner.initial_bpm()
+    }
+}
+
+/// Verdict on one target note.
+#[wasm_bindgen]
+#[derive(Debug, Clone, Copy)]
+pub struct Outcome {
+    pub index: usize,
+    pub hit: bool,
+    pub matched_secs: f32,
+    /// Most common wrong note heard, or -1.
+    pub wrong_midi: i32,
+    /// First matching reading relative to the written start, or NaN.
+    pub onset_offset_secs: f32,
+}
+
+/// Scores readings against a flat event list from [`Song::events`].
+#[wasm_bindgen]
+pub struct Judge {
+    inner: Scorer,
+}
+
+#[wasm_bindgen]
+impl Judge {
+    /// `latency_secs` is subtracted from every reading time; pass the
+    /// detector's effective delay so scoring lines up with the written notes.
+    #[wasm_bindgen(constructor)]
+    pub fn new(events: &[f32], latency_secs: f32, reading_interval_secs: f32) -> Judge {
+        let targets: Vec<NoteEvent> = events
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|c| NoteEvent {
+                midi: c[0] as u8,
+                start_secs: c[1],
+                duration_secs: c[2],
+                velocity: 100,
+            })
+            .collect();
+        let options = ScorerOptions {
+            latency_secs,
+            reading_interval_secs,
+            ..Default::default()
+        };
+        Judge {
+            inner: Scorer::new(targets, options),
+        }
+    }
+
+    /// `midi` is the detected note or -1 when unvoiced. Returns outcomes for
+    /// notes whose windows closed.
+    pub fn feed(&mut self, song_time_secs: f32, midi: i32) -> Vec<Outcome> {
+        let detected = if midi >= 0 { Some(midi as u8) } else { None };
+        self.inner
+            .feed(song_time_secs, detected)
+            .into_iter()
+            .map(convert)
+            .collect()
+    }
+
+    pub fn finish(&mut self) -> Vec<Outcome> {
+        self.inner.finish().into_iter().map(convert).collect()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn hits(&self) -> usize {
+        self.inner.hits()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn finished(&self) -> usize {
+        self.inner.finished()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn total(&self) -> usize {
+        self.inner.total()
+    }
+}
+
+fn convert(o: pitch_song::NoteOutcome) -> Outcome {
+    Outcome {
+        index: o.index,
+        hit: o.hit,
+        matched_secs: o.matched_secs,
+        wrong_midi: o.wrong_midi.map(|m| m as i32).unwrap_or(-1),
+        onset_offset_secs: o.onset_offset_secs.unwrap_or(f32::NAN),
+    }
+}
