@@ -11,6 +11,15 @@ let stream = null;
 let latest = null;
 let running = false;
 
+// A real instrument's confidence dips constantly (decay, a wobbling harmonic),
+// and the tracker reports those analyses as unvoiced. Blanking the display on
+// each one makes the reading flicker. Instead, hold the last good reading for
+// HOLD_MS after it was seen, dimmed once it is older than FRESH_MS.
+const HOLD_MS = 1500;
+const FRESH_MS = 250;
+let lastVoiced = null;
+let lastVoicedAt = 0;
+
 worker.onmessage = (e) => {
   const msg = e.data;
   if (msg.type === "ready") {
@@ -30,6 +39,10 @@ worker.onmessage = (e) => {
     if (debug) console.log(`[started] ${ui.status.textContent}`);
   } else if (msg.type === "reading") {
     latest = msg;
+    if (msg.voiced) {
+      lastVoiced = msg;
+      lastVoicedAt = performance.now();
+    }
     if (debug && msg.voiced) {
       console.log(`[reading] ${msg.note} ${msg.frequency.toFixed(2)} Hz ${msg.cents.toFixed(1)} cents conf ${msg.confidence.toFixed(2)}`);
     }
@@ -85,7 +98,7 @@ function stop() {
   worker.postMessage({ type: "stop" });
   if (stream) stream.getTracks().forEach((t) => t.stop());
   if (audio) audio.close();
-  stream = audio = latest = null;
+  stream = audio = latest = lastVoiced = null;
   ui.start.textContent = "Start";
   ui.start.classList.remove("on");
   ui.status.textContent = "Stopped.";
@@ -94,11 +107,18 @@ function stop() {
 
 function draw() {
   if (!running) return;
-  render(latest);
+  const age = performance.now() - lastVoicedAt;
+  if (latest && latest.voiced) {
+    render(latest, false);
+  } else if (lastVoiced && age < HOLD_MS) {
+    render({ ...lastVoiced, rms: latest ? latest.rms : 0 }, age > FRESH_MS);
+  } else {
+    render(latest, false);
+  }
   requestAnimationFrame(draw);
 }
 
-function render(r) {
+function render(r, held) {
   if (!r || !r.voiced) {
     ui.note.textContent = "–";
     ui.note.className = "";
@@ -110,7 +130,7 @@ function render(r) {
     return;
   }
   ui.note.textContent = r.note;
-  ui.note.className = Math.abs(r.cents) <= 5 ? "ok" : r.cents < 0 ? "flat" : "sharp";
+  ui.note.className = (Math.abs(r.cents) <= 5 ? "ok" : r.cents < 0 ? "flat" : "sharp") + (held ? " held" : "");
   // Meter spans -50..+50 cents across the width.
   ui.needle.style.left = `${50 + r.cents}%`;
   ui.cents.textContent = `${r.cents >= 0 ? "+" : ""}${r.cents.toFixed(0)} ¢`;
