@@ -80,7 +80,10 @@ try {
   await send("Runtime.enable");
   await send("Page.navigate", { url: `${BASE}/?instrument=bass%20(4-string)&autostart=1&debug=1` });
   await sleep(4000);
-  const status = (await send("Runtime.evaluate", { expression: "document.getElementById('status').textContent", returnByValue: true })).result.value;
+  const text = async (id) => (await send("Runtime.evaluate", { expression: `document.getElementById('${id}').textContent`, returnByValue: true })).result.value;
+  const status = await text("status");
+  const shownNote = await text("note");
+  const shownCents = parseFloat((await text("cents")).replace("+", ""));
   ws.close();
 
   console.log(status);
@@ -95,6 +98,10 @@ try {
   }
   const wrong = readings.filter((r) => !SEGMENTS.some((s) => s.note === r.note));
   if (wrong.length > readings.length * 0.05) { console.log(`  ${wrong.length} readings of unexpected notes FAIL`); failed = true; }
+  // The smoothed display must show one of the test notes, close to in tune.
+  const displayOk = SEGMENTS.some((seg) => seg.note === shownNote) && Math.abs(shownCents) <= 3;
+  console.log(`  display: ${shownNote} ${shownCents} cents ${displayOk ? "OK" : "FAIL"}`);
+  if (!displayOk) failed = true;
   if (errors.length) failed = true;
   if (!/Nominal latency \d+ ms/.test(status)) { console.log("  status line missing latency FAIL"); failed = true; }
 } finally {
