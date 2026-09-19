@@ -8,6 +8,10 @@ edition = "2021"
 license = "MIT"
 repository = "https://github.com/murphybradyluke/pitch-detector"
 
+# Tests sweep thousands of synthetic notes; unoptimised f64 loops make that slow.
+[profile.dev]
+opt-level = 1
+
 [profile.release]
 opt-level = 3
 lto = true

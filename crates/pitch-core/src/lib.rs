@@ -9,15 +9,18 @@
 //!
 //! - [`yin`]: the estimator. `&[f32]` + sample rate -> [`PitchResult`].
 //! - [`note`]: frequency <-> MIDI note number and cents.
+//! - [`instrument`]: range presets that size the analysis window.
 //! - [`smoothing`]: RMS level and a small median filter.
-//! - [`tracker`]: stateful pipeline that gates on level and confidence and
-//!   median-filters the result, for a stable readout.
+//! - [`tracker`]: sliding-window pipeline that gates on level and confidence
+//!   and median-filters the result, for a stable low-latency readout.
 
+pub mod instrument;
 pub mod note;
 pub mod smoothing;
 pub mod tracker;
 pub mod yin;
 
+pub use instrument::Instrument;
 pub use note::{describe_frequency, frequency_to_midi, midi_to_frequency, NoteInfo, A4_DEFAULT};
 pub use smoothing::{rms, MedianFilter};
 pub use tracker::{PitchTracker, TrackedPitch, TrackerOptions};
