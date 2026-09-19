@@ -3,3 +3,4 @@ Cargo.lock.bak
 *.wasm
 pkg/
 web/pkg/
+web/node_modules/

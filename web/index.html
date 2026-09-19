@@ -48,6 +48,12 @@
     #target { font-size: 48px; font-weight: 700; min-height: 1.2em; }
     #target .next { font-size: 20px; color: var(--dim); font-weight: 400; margin-left: 16px; }
     #countin { font-size: 64px; font-weight: 700; color: var(--accent); min-height: 1.2em; }
+
+    /* Tablature (alphaTab) */
+    #tabwrap { position: relative; width: min(96vw, 900px); overflow: hidden; background: #f5f5f0; border-radius: 8px; }
+    #tab { overflow: hidden; }
+    #tab .at-surface { color-scheme: light; }
+    #tabcursor { position: absolute; top: 0; bottom: 0; width: 3px; background: var(--accent); left: -10px; pointer-events: none; }
   </style>
 </head>
 <body>
@@ -72,15 +78,19 @@
 
   <section id="song">
     <div class="controls">
-      <input id="midifile" type="file" accept=".mid,.midi,audio/midi" />
+      <input id="midifile" type="file" accept=".mid,.midi,.gp,.gp3,.gp4,.gp5,.gpx,audio/midi" />
       <select id="track" disabled></select>
       <label><input id="hear" type="checkbox" checked> hear the part</label>
       <label><input id="click" type="checkbox" checked> click</label>
       <button id="play" class="primary" disabled>Play</button>
     </div>
-    <div id="songinfo">Load a MIDI file, pick the bass track, press Play. Four clicks count you in.</div>
+    <div id="songinfo">Load a MIDI or Guitar Pro file, pick the bass track, press Play. Four clicks count you in.</div>
     <div id="countin"></div>
     <div id="target"></div>
+    <div id="tabwrap" hidden>
+      <div id="tab"></div>
+      <div id="tabcursor"></div>
+    </div>
     <canvas id="roll"></canvas>
     <div id="scoreline"></div>
   </section>

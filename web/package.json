@@ -1,0 +1,8 @@
+{
+  "name": "pitch-detector-web",
+  "private": true,
+  "description": "Static tuner / play-along page. alphaTab parses Guitar Pro files and renders tab.",
+  "dependencies": {
+    "@coderline/alphatab": "^1.6.0"
+  }
+}

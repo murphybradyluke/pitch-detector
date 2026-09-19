@@ -1,7 +1,7 @@
 # pitch-detector
 
 Real-time monophonic pitch detection for a tuner and a play-along note checker
-that scores you against a MIDI file. The core is a dependency-free Rust crate
+that scores you against a MIDI or Guitar Pro file, with the tab on screen. The core is a dependency-free Rust crate
 so it can be compiled to WASM for the web and reused on iOS and Android.
 
 ## Layout
@@ -12,7 +12,7 @@ crates/pitch-song/   reference songs: MIDI import, chord reduction, scorer
   src/midi.rs        Standard MIDI File -> per-track NoteEvents with a tempo map
   src/scorer.rs      judges each target note from the stream of readings
 crates/pitch-wasm/   wasm-bindgen wrapper: Tracker, Reading, Song, Judge
-web/                 tuner page: AudioWorklet -> Worker (WASM) -> UI
+web/                 tuner page: AudioWorklet -> Worker (WASM) -> UI; alphaTab for Guitar Pro
 scripts/e2e.mjs      headless-Chromium end-to-end test with a WAV as the mic
   src/yin.rs         YIN estimator: &[f32] + sample rate -> { frequency, confidence }
   src/note.rs        frequency <-> MIDI note number and cents
@@ -56,7 +56,7 @@ scripts/e2e.mjs      headless-Chromium end-to-end test with a WAV as the mic
 
 ## Play-along
 
-Load a `.mid` file, pick a track (bass tracks are picked by default: General
+Load a `.mid` or Guitar Pro file (`.gp`, `.gp3`, `.gp4`, `.gp5`, `.gpx`), pick a track (bass tracks are picked by default: General
 MIDI programs 32–39, or a track named "bass", or else the lowest track), and
 press Play. Four clicks count you in, then the roll scrolls: grey notes are
 coming, blue is now, green was hit, red was missed, and white dots are what
@@ -74,6 +74,13 @@ headphones for that, or the mic scores the synth.
   100 ms of latency.
 - **Tempo changes** anywhere in the file are honoured; SMPTE-timed files are
   not supported.
+- **Guitar Pro** files go through [alphaTab](https://alphatab.net) in the
+  browser: it parses the score, generates a standard MIDI file from it (one
+  MIDI track per score track, bends as pitch bends) and that file takes the
+  same path as a `.mid`. alphaTab also renders the selected track as tab
+  above the roll, and a cursor follows the audio clock through it using
+  alphaTab's tick and bounds lookups. No alphaTab player or soundfont is
+  used; our click and synth are the playback.
 
 ## Web tuner
 
@@ -85,6 +92,7 @@ the WASM itself: its global scope lacks `fetch` and `TextDecoder`.
 
 ```
 wasm-pack build crates/pitch-wasm --target web --out-dir ../../web/pkg --release
+(cd web && npm install)          # alphaTab, for Guitar Pro files and tab rendering
 (cd web && python3 -m http.server 8765)
 # open http://localhost:8765/
 ```
@@ -98,7 +106,7 @@ every reading to the console; `?smooth=<ms>` sets the display smoothing.
 cargo test                      # unit + synthetic-signal + MIDI/scorer tests
 cargo clippy --all-targets
 cargo fmt
-node scripts/e2e.mjs            # tuner + play-along in headless chromium; needs wasm build + server
+node scripts/e2e.mjs            # tuner, MIDI play-along, Guitar Pro in headless chromium
 ```
 
 Rust is managed with [mise](https://mise.jdx.dev) on the dev machine

@@ -5,6 +5,9 @@
 // Chromium as the fake microphone; every reading must be within 2 cents.
 // Phase 2 (play-along): a constant A1 WAV against a MIDI of four A1 notes
 // and one A3; the score must be 4 of 5.
+// Phase 3 (Guitar Pro): the same song as a .gp file written by alphaTab's
+// exporter; the bass track must be picked by name, tab must render, and the
+// score must again be 4 of 5.
 //
 // Prerequisites: `wasm-pack build crates/pitch-wasm --target web --out-dir
 // ../../web/pkg --release`, a static server on web/ (default port 8765), and
@@ -160,8 +163,69 @@ try {
       if (b.errors.length) failed = true;
     } finally { b.close(); }
   }
+
+  // ---- Phase 3: Guitar Pro --------------------------------------------
+  console.log("Phase 3: Guitar Pro");
+  const gpPath = join(dir, "test.gp");
+  writeFileSync(gpPath, await guitarProFile());
+  {
+    const b = await launch(dir, wav2);
+    try {
+      await b.send("Page.navigate", { url: `${BASE}/?instrument=bass%20(4-string)&autostart=1` });
+      await b.waitFor("/Nominal latency/.test(document.getElementById('status').textContent)", 8000, "audio start");
+      await b.evaluate("document.getElementById('tab-song').click()");
+      const { root } = await b.send("DOM.getDocument", { depth: 1 });
+      const { nodeId } = await b.send("DOM.querySelector", { nodeId: root.nodeId, selector: "#midifile" });
+      await b.send("DOM.setFileInputFiles", { nodeId, files: [gpPath] });
+      await b.waitFor("!document.getElementById('play').disabled", 15000, "track to load");
+      await b.waitFor("document.querySelector('#tab svg') !== null", 15000, "tab to render");
+      const info = await b.text("#songinfo");
+      const trackLabel = await b.evaluate("document.getElementById('track').selectedOptions[0].textContent");
+      const options = await b.evaluate("[...document.getElementById('track').options].map(o => o.textContent).join(' | ')");
+      console.log(`  ${info}`);
+      console.log(`  tracks: ${options}`);
+      await b.evaluate("document.getElementById('play').click()");
+      await sleep(3500);
+      // The cursor must lie inside the rendered bounds of the beat that is
+      // sounding right now (compared in one evaluation to avoid a race).
+      const cursor = await b.evaluate(`(() => {
+        const d = window.__pitch, api = d.tabApi, t = d.songTime();
+        const f = api.tickCache.findBeat(new Set([d.tabTrack]), d.songTimeToTick(t), null);
+        const bb = api.boundsLookup.findBeat(f.beat), nb = f.nextBeat && api.boundsLookup.findBeat(f.nextBeat.beat);
+        const x = parseFloat(document.getElementById('tabcursor').style.left) + document.getElementById('tab').scrollLeft;
+        return { t, x, x0: bb.visualBounds.x, x1: nb ? nb.visualBounds.x : bb.visualBounds.x + bb.visualBounds.w, frets: f.beat.notes.map(n => n.fret) };
+      })()`);
+      const cursorX = cursor.x;
+      const cursorOk = cursor.x >= cursor.x0 - 1 && cursor.x < cursor.x1;
+      console.log(`  cursor at song time ${cursor.t.toFixed(2)} s: x=${cursor.x.toFixed(1)} within beat [${cursor.x0.toFixed(1)}, ${cursor.x1.toFixed(1)}) frets ${cursor.frets} ${cursorOk ? "OK" : "FAIL"}`);
+      if (!cursorOk) failed = true;
+      await b.waitFor("/^Finished/.test(document.getElementById('songinfo').textContent)", 15000, "song to finish");
+      const result = await b.text("#songinfo");
+      console.log(`  ${result}; cursor at ${cursorX}px mid-song`);
+      for (const err of b.errors) console.log("  error:", err);
+      if (!/^Bass \(5 notes/.test(trackLabel)) fail(`bass track not selected by name: ${trackLabel}`);
+      if (!/4 of 5 notes/.test(result)) fail("expected 4 of 5 notes");
+      if (!(cursorX > 0)) fail("tab cursor did not move");
+      if (b.errors.length) failed = true;
+    } finally { b.close(); }
+  }
 } finally {
   rmSync(dir, { recursive: true, force: true });
+}
+
+/// The phase-2 song as a Guitar Pro 7 file, via alphaTab's alphaTex importer
+/// and GP7 exporter. Bass track: four A1 half notes then A3 and a rest.
+async function guitarProFile() {
+  const at = await import("../web/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs");
+  const settings = new at.Settings();
+  const tex = `\\title "E2E" \\tempo 120
+\\track "Guitar" \\instrument 30
+r.1 | r.1 | r.1 |
+\\track "Bass" \\instrument 33 \\tuning G2 D2 A1 E1
+0.3.2 0.3.2 | 0.3.2 0.3.2 | 14.1.2 r.2 |`;
+  const importer = new at.importer.AlphaTexImporter();
+  importer.initFromString(tex, settings);
+  return new at.exporter.Gp7Exporter().export(importer.readScore(), settings);
 }
 console.log(failed ? "E2E FAILED" : "E2E PASSED");
 process.exit(failed ? 1 : 0);

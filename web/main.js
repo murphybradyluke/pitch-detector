@@ -217,12 +217,112 @@ ui.midifile.onchange = async () => {
   if (!file) return;
   const bytes = await file.arrayBuffer();
   ui.songinfo.textContent = `Reading ${file.name}…`;
-  worker.postMessage({ type: "load_song", name: file.name, bytes }, [bytes]);
+  if (/\.(gp|gp3|gp4|gp5|gpx)$/i.test(file.name)) {
+    await loadGuitarPro(file.name, bytes);
+  } else {
+    clearTab();
+    worker.postMessage({ type: "load_song", name: file.name, bytes }, [bytes]);
+  }
 };
+
+// ---------------------------------------------------------------------------
+// Guitar Pro via alphaTab: parse the score, turn it into a standard MIDI file
+// (one MIDI track per score track, in order) and hand that to the same
+// pipeline MIDI files use. The score itself stays here for rendering tab.
+// ---------------------------------------------------------------------------
+
+const ALPHATAB_DIR = "./node_modules/@coderline/alphatab/dist/";
+let alphaTab = null; // module, loaded on first use
+let tabScore = null; // alphaTab Score of the loaded Guitar Pro file
+let tabApi = null; // alphaTab renderer bound to #tab
+let tabTrack = null; // score track index currently rendered
+let tabBeatHint = null;
+const tabwrap = $("tabwrap"), tabcursor = $("tabcursor");
+
+async function loadGuitarPro(name, bytes) {
+  try {
+    alphaTab ??= await import(`${ALPHATAB_DIR}alphaTab.mjs`);
+    const settings = new alphaTab.Settings();
+    tabScore = alphaTab.importer.ScoreLoader.loadScoreFromBytes(new Uint8Array(bytes), settings);
+    const midiFile = new alphaTab.midi.MidiFile();
+    midiFile.format = alphaTab.midi.MidiFileFormat.MultiTrack;
+    // smf1Mode: per-note bends become channel pitch bends, which is what a
+    // standard MIDI file can hold.
+    const handler = new alphaTab.midi.AlphaSynthMidiFileHandler(midiFile, true);
+    new alphaTab.midi.MidiFileGenerator(tabScore, settings, handler).generate();
+    const midi = midiFile.toBinary();
+    const trackNames = tabScore.tracks.map((t) => t.name || `Track ${t.index + 1}`);
+    const title = tabScore.title ? `${name} (${tabScore.title})` : name;
+    worker.postMessage({ type: "load_song", name: title, bytes: midi.buffer, trackNames }, [midi.buffer]);
+  } catch (err) {
+    tabScore = null;
+    ui.songinfo.textContent = `Could not read Guitar Pro file: ${err.message || err}`;
+    console.error(err);
+  }
+}
+
+function clearTab() {
+  tabScore = null;
+  tabTrack = null;
+  tabwrap.hidden = true;
+  if (tabApi) tabApi.renderScore(null, null);
+}
+
+function renderTab(trackIndex) {
+  if (!tabScore || !alphaTab) return;
+  if (!tabApi) {
+    tabApi = new alphaTab.AlphaTabApi($("tab"), {
+      core: { fontDirectory: `${ALPHATAB_DIR}font/`, useWorkers: false, engine: "svg" },
+      display: { layoutMode: "horizontal", scale: 0.85, staveProfile: "tab" },
+      player: { enablePlayer: false },
+    });
+  }
+  tabTrack = trackIndex;
+  tabBeatHint = null;
+  tabwrap.hidden = false;
+  tabApi.renderScore(tabScore, [trackIndex]);
+}
+
+// Move the cursor to the beat sounding at song time t and keep it in view.
+function updateTabCursor(t) {
+  if (!tabApi || tabTrack === null || !tabApi.tickCache || !tabApi.boundsLookup || !track) return;
+  const tick = songTimeToTick(t);
+  if (tick === null) return;
+  const found = tabApi.tickCache.findBeat(new Set([tabTrack]), tick, tabBeatHint);
+  if (!found) return;
+  tabBeatHint = found;
+  const bounds = tabApi.boundsLookup.findBeat(found.beat);
+  if (!bounds) return;
+  // Interpolate within the beat so the cursor glides. beatLookup.start is
+  // relative to its bar; masterBar.start makes it absolute like `tick`.
+  const beatStart = found.masterBar.start + found.beatLookup.start;
+  const frac = found.tickDuration > 0 ? Math.max(0, Math.min(1, (tick - beatStart) / found.tickDuration)) : 0;
+  const next = found.nextBeat ? tabApi.boundsLookup.findBeat(found.nextBeat.beat) : null;
+  const x0 = bounds.visualBounds.x;
+  const x1 = next && next.visualBounds.x > x0 ? next.visualBounds.x : x0 + bounds.visualBounds.w;
+  const x = x0 + (x1 - x0) * frac;
+  const viewW = tabwrap.clientWidth;
+  const scroll = Math.max(0, x - viewW * PLAYHEAD_FRAC);
+  $("tab").scrollLeft = scroll;
+  tabcursor.style.left = `${x - scroll}px`;
+  tabwrap.style.height = `${bounds.barBounds.masterBarBounds.visualBounds.h + 16}px`;
+}
+
+// alphaTab's MIDI uses 960 ticks per quarter note; our beat times come from
+// the same file, one entry per quarter note, so tick = beat index * 960.
+function songTimeToTick(t) {
+  const beats = track.beats;
+  if (!beats || beats.length < 2 || t < 0) return null;
+  let i = 0;
+  while (i + 1 < beats.length && beats[i + 1] <= t) i++;
+  const span = i + 1 < beats.length ? beats[i + 1] - beats[i] : beats[i] - beats[i - 1];
+  return (i + (span > 0 ? (t - beats[i]) / span : 0)) * 960;
+}
 
 function onSongLoaded(msg) {
   songMeta = msg;
   track = null;
+  if (!tabScore) clearTab();
   ui.track.innerHTML = "";
   const usable = msg.tracks.filter((t) => t.noteCount > 0 && !t.isDrums);
   if (usable.length === 0) {
@@ -266,6 +366,7 @@ function onTrackEvents(msg) {
   ui.scoreline.textContent = "";
   updatePlayButton();
   drawRoll(0);
+  if (tabScore) renderTab(msg.index);
 }
 
 function updatePlayButton() {
@@ -404,6 +505,7 @@ function draw() {
       if (t > songMeta.durationSecs + 0.5) stopSong();
     }
     drawRoll(t);
+    updateTabCursor(t);
   }
   requestAnimationFrame(draw);
 }
@@ -510,3 +612,9 @@ function formatTime(secs) {
 }
 
 sizeRoll();
+
+// Debug handle for headless tests.
+window.__pitch = {
+  get tabApi() { return tabApi; }, get track() { return track; }, get tabTrack() { return tabTrack; },
+  songTimeToTick, songTime: () => (playing && audio ? audio.currentTime - playing.startTime : null),
+};

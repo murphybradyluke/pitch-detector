@@ -71,9 +71,10 @@ onmessage = async (e) => {
       song = null;
       try {
         song = new Song(new Uint8Array(msg.bytes));
+        const names = msg.trackNames || [];
         const tracks = song.tracks().map((t) => {
           const r = {
-            index: t.index, name: t.name, noteCount: t.note_count,
+            index: t.index, name: names[t.index] || t.name, noteCount: t.note_count,
             lowestMidi: t.lowest_midi, highestMidi: t.highest_midi, program: t.program, isDrums: t.is_drums,
           };
           t.free();
