@@ -1,0 +1,13 @@
+[package]
+name = "pitch-core"
+description = "Monophonic pitch detection (YIN) as pure functions over sample buffers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# No dependencies on purpose: this crate must compile for wasm32 and mobile
+# targets without pulling in anything platform-specific.
+[dependencies]
+
+[dev-dependencies]
