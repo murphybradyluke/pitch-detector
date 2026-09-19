@@ -141,3 +141,23 @@ fn reusable_estimator_rejects_wrong_buffer_length() {
     let mut yin = Yin::new(FRAME, 48_000.0, YinOptions::default());
     yin.detect(&[0.0; 100]);
 }
+
+#[test]
+fn full_guitar_range_open_low_e_to_24th_fret_high_e() {
+    // Standard tuning, 24-fret guitar: E2 (MIDI 40, 82.4 Hz) up to E6 (MIDI 88,
+    // 1318.5 Hz). The default search range must include the whole span.
+    let sr = 48_000.0;
+    let mut yin = Yin::new(FRAME, sr, YinOptions::default());
+    for midi in 40..=88 {
+        let f = midi_to_frequency(midi as f32, A4_DEFAULT);
+        // Guitar-like spectrum: strong 2nd harmonic, decaying upper partials.
+        let buf = harmonics(f, sr, FRAME, &[0.3, 0.35, 0.2, 0.1, 0.05]);
+        let r = yin.detect(&buf);
+        assert_within_cents(r, f, 3.0, &format!("guitar MIDI {midi}"));
+        assert!(
+            r.confidence > 0.9,
+            "MIDI {midi}: confidence {}",
+            r.confidence
+        );
+    }
+}
