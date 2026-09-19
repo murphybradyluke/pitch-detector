@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pitch-core"]
+members = ["crates/pitch-core", "crates/pitch-wasm"]
 
 [workspace.package]
 version = "0.1.0"

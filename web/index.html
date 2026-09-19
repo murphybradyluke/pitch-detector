@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pitch Detector</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2214%22 font-size=%2214%22>🎸</text></svg>" />
+  <style>
+    :root {
+      --bg: #111; --fg: #eee; --dim: #888; --ok: #4caf50; --warn: #ffb300; --bad: #e53935;
+      color-scheme: dark;
+    }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg);
+           display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 16px; box-sizing: border-box; }
+    header { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
+    select, button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid #444; background: #222; color: var(--fg); }
+    button.on { background: var(--bad); border-color: var(--bad); }
+    #note { font-size: clamp(96px, 30vw, 220px); font-weight: 700; line-height: 1; margin: 24px 0 8px; min-height: 1em; }
+    #note.flat, #note.sharp { color: var(--warn); }
+    #note.ok { color: var(--ok); }
+    #meter { width: min(90vw, 600px); height: 24px; position: relative; background: #222; border-radius: 12px; margin: 8px 0; overflow: hidden; }
+    #meter .center { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: #666; }
+    #meter .needle { position: absolute; top: 0; bottom: 0; width: 6px; margin-left: -3px; background: var(--fg); border-radius: 3px;
+                     left: 50%; transition: left 40ms linear; }
+    #meter .zone { position: absolute; top: 0; bottom: 0; left: 45%; width: 10%; background: rgba(76,175,80,.25); }
+    .row { display: flex; gap: 24px; color: var(--dim); font-variant-numeric: tabular-nums; flex-wrap: wrap; justify-content: center; }
+    #level { width: min(90vw, 600px); height: 6px; background: #222; border-radius: 3px; overflow: hidden; margin-top: 16px; }
+    #level div { height: 100%; width: 0; background: var(--dim); }
+    #status { color: var(--dim); margin-top: 24px; text-align: center; max-width: 600px; }
+  </style>
+</head>
+<body>
+  <header>
+    <select id="instrument"></select>
+    <label>A4 <input id="a4" type="number" value="440" min="415" max="466" step="1" style="width:5em;font:inherit;padding:6px;border-radius:8px;border:1px solid #444;background:#222;color:var(--fg)"></label>
+    <button id="start">Start</button>
+  </header>
+  <div id="note">–</div>
+  <div id="meter"><div class="zone"></div><div class="center"></div><div class="needle"></div></div>
+  <div class="row"><span id="cents">0 ¢</span><span id="freq">0.0 Hz</span><span id="conf"></span></div>
+  <div id="level"><div></div></div>
+  <div id="status">Pick an instrument and press Start. Allow microphone access when asked.</div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

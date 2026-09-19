@@ -8,6 +8,9 @@ for the web and reused on iOS and Android.
 
 ```
 crates/pitch-core/   pure detection library (no I/O, no platform code)
+crates/pitch-wasm/   wasm-bindgen wrapper: Tracker, Reading, instrument_names()
+web/                 tuner page: AudioWorklet -> Worker (WASM) -> UI
+scripts/e2e.mjs      headless-Chromium end-to-end test with a WAV as the mic
   src/yin.rs         YIN estimator: &[f32] + sample rate -> { frequency, confidence }
   src/note.rs        frequency <-> MIDI note number and cents
   src/instrument.rs  range presets (guitar, 4/5-string bass, drop tunings, ...)
@@ -48,12 +51,30 @@ crates/pitch-core/   pure detection library (no I/O, no platform code)
   sample is 90 cents and sub-sample interpolation no longer holds 3 cents.
   Presets stop at C7.
 
+## Web tuner
+
+Audio path: `getUserMedia` (echo cancellation, noise suppression and auto
+gain off) -> `AudioWorklet` that forwards 128-sample blocks over a
+`MessagePort` -> dedicated `Worker` running the WASM tracker -> readings to
+the main thread, drawn on `requestAnimationFrame`. The worklet cannot host
+the WASM itself: its global scope lacks `fetch` and `TextDecoder`.
+
+```
+wasm-pack build crates/pitch-wasm --target web --out-dir ../../web/pkg --release
+(cd web && python3 -m http.server 8765)
+# open http://localhost:8765/
+```
+
+Query parameters for testing: `?instrument=guitar&autostart=1&debug=1` logs
+every reading to the console.
+
 ## Develop
 
 ```
-cargo test
+cargo test                      # unit + synthetic-signal tests
 cargo clippy --all-targets
 cargo fmt
+node scripts/e2e.mjs            # needs the wasm build, the static server, and chromium
 ```
 
 Rust is managed with [mise](https://mise.jdx.dev) on the dev machine
