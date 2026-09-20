@@ -19,6 +19,7 @@
     button.primary { background: var(--accent); border-color: var(--accent); color: #000; }
     button:disabled { opacity: 0.4; }
     label { display: inline-flex; gap: 6px; align-items: center; color: var(--dim); }
+    .devices select { max-width: 40vw; }
     .tabs { display: flex; gap: 4px; margin-top: 4px; }
     .tabs button { border-radius: 8px 8px 0 0; border-bottom: none; }
     .tabs button.active { background: #333; color: var(--fg); }
@@ -62,6 +63,11 @@
     <label>A4 <input id="a4" type="number" value="440" min="415" max="466" step="1"></label>
     <button id="start">Start</button>
   </header>
+  <div class="controls devices">
+    <label>In <select id="input"><option value="">default microphone</option></select></label>
+    <label id="channelwrap" hidden>ch <select id="channel"><option value="-1">mix</option><option value="0">1 / L</option><option value="1">2 / R</option></select></label>
+    <label id="outputwrap" hidden>Out <select id="output"><option value="">default</option></select></label>
+  </div>
   <div id="level"><div></div></div>
   <div id="status">Pick an instrument and press Start. Allow microphone access when asked.</div>
 

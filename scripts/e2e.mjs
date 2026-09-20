@@ -82,7 +82,7 @@ async function launch(dir, wavPath) {
       if (await evaluate(expr)) return true;
       await sleep(100);
     }
-    throw new Error(`timed out waiting for ${what}`);
+    throw new Error(`timed out waiting for ${what}` + (errors.length ? `; page errors: ${errors.join(" // ")}` : ""));
   };
   return { send, evaluate, text, waitFor, readings, errors, close: () => { ws.close(); chrome.kill(); } };
 }
@@ -125,6 +125,13 @@ try {
       if (!displayOk) failed = true;
       if (b.errors.length) failed = true;
       if (!/Nominal latency \d+ ms/.test(status)) fail("status line missing latency");
+      // Device pickers: Chromium's fake devices should be listed with labels
+      // once permission is granted, and the output picker should appear.
+      const inputs = await b.evaluate("[...document.getElementById('input').options].map(o => o.textContent).join(' | ')");
+      const outputShown = await b.evaluate("!document.getElementById('outputwrap').hidden");
+      console.log(`  inputs: ${inputs}; output picker ${outputShown ? "shown" : "hidden"}`);
+      if (!/Fake/i.test(inputs)) fail("input devices not listed");
+      if (!outputShown) fail("output picker hidden in Chromium");
     } finally { b.close(); }
   }
 

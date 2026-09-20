@@ -106,6 +106,13 @@ wasm-pack build crates/pitch-wasm --target web --out-dir ../../web/pkg --release
 # open http://localhost:8765/
 ```
 
+Devices: the "In" picker lists every input the OS exposes, so an audio
+interface appears by name (CoreAudio on macOS, WASAPI on Windows, PipeWire
+on Linux; browsers have no ASIO path). "ch" picks one side of a stereo
+interface or a mix. "Out" appears where `AudioContext.setSinkId` exists
+(Chromium; Safari routes to the system default). Choices persist in the
+browser.
+
 Query parameters for testing: `?instrument=guitar&autostart=1&debug=1` logs
 every reading to the console; `?smooth=<ms>` sets the display smoothing.
 

@@ -6,6 +6,7 @@ const ui = {
   tabTuner: $("tab-tuner"), tabSong: $("tab-song"), tuner: $("tuner"), song: $("song"),
   midifile: $("midifile"), track: $("track"), hear: $("hear"), click: $("click"), play: $("play"),
   songinfo: $("songinfo"), countin: $("countin"), target: $("target"), roll: $("roll"), scoreline: $("scoreline"),
+  input: $("input"), output: $("output"), outputwrap: $("outputwrap"), channel: $("channel"), channelwrap: $("channelwrap"),
 };
 
 // ?instrument=<name>&autostart=1&debug=1 for headless end-to-end tests.
@@ -16,8 +17,66 @@ const debug = params.has("debug");
 const worker = new Worker("./worker.js", { type: "module" });
 let audio = null;
 let stream = null;
+let captureNode = null;
 let latest = null;
 let running = false;
+
+// ---------------------------------------------------------------------------
+// Audio devices. Browsers see audio interfaces as ordinary devices through
+// the OS audio stack (CoreAudio, WASAPI, PipeWire); there is no ASIO path.
+// Input choice is a getUserMedia constraint. Output choice needs
+// AudioContext.setSinkId, which Chromium has and Safari does not, so the
+// output picker only appears where it works. Device labels are blank until
+// the microphone permission has been granted once, so the lists are refilled
+// after every start.
+// ---------------------------------------------------------------------------
+
+const canPickOutput = "setSinkId" in AudioContext.prototype;
+
+async function refreshDevices() {
+  let devices = [];
+  try { devices = await navigator.mediaDevices.enumerateDevices(); } catch { return; }
+  const fill = (select, kind, saved, defaultLabel) => {
+    const current = select.value || saved || "";
+    select.innerHTML = "";
+    const def = document.createElement("option");
+    def.value = "";
+    def.textContent = defaultLabel;
+    select.appendChild(def);
+    let n = 0;
+    for (const d of devices) {
+      if (d.kind !== kind || d.deviceId === "default" || d.deviceId === "communications") continue;
+      const opt = document.createElement("option");
+      opt.value = d.deviceId;
+      opt.textContent = d.label || `${kind === "audioinput" ? "Input" : "Output"} ${++n}`;
+      select.appendChild(opt);
+    }
+    select.value = [...select.options].some((o) => o.value === current) ? current : "";
+  };
+  fill(ui.input, "audioinput", localStorage.getItem("input"), "default microphone");
+  if (canPickOutput) {
+    fill(ui.output, "audiooutput", localStorage.getItem("output"), "default output");
+    ui.outputwrap.hidden = false;
+  }
+}
+
+ui.input.onchange = () => {
+  localStorage.setItem("input", ui.input.value);
+  if (running) { stop(); start(); }
+};
+ui.output.onchange = async () => {
+  localStorage.setItem("output", ui.output.value);
+  if (audio && canPickOutput) {
+    try { await audio.setSinkId(ui.output.value); } catch (err) { ui.status.textContent = `Output unavailable: ${err.message}`; }
+  }
+};
+ui.channel.onchange = () => {
+  localStorage.setItem("channel", ui.channel.value);
+  if (captureNode) captureNode.port.postMessage({ channel: Number(ui.channel.value) });
+};
+ui.channel.value = localStorage.getItem("channel") || "-1";
+navigator.mediaDevices?.addEventListener?.("devicechange", refreshDevices);
+refreshDevices();
 
 // ---------------------------------------------------------------------------
 // Tuner display: hold and smoothing
@@ -93,8 +152,10 @@ worker.onmessage = (e) => {
       break;
     case "started": {
       const capture = audio.baseLatency ? ` + ${(audio.baseLatency * 1000).toFixed(0)} ms capture` : "";
+      const track = stream && stream.getAudioTracks()[0];
+      const device = track && track.label ? `${track.label}: ` : "";
       ui.status.textContent =
-        `${audio.sampleRate} Hz, window ${msg.frameLen} samples, hop ${msg.hop}. ` +
+        `${device}${audio.sampleRate} Hz, window ${msg.frameLen} samples, hop ${msg.hop}. ` +
         `Nominal latency ${(msg.nominalLatencySecs * 1000).toFixed(0)} ms${capture}.`;
       if (debug) console.log(`[started] ${ui.status.textContent}`);
       break;
@@ -139,23 +200,35 @@ ui.instrument.onchange = () => {
 };
 
 async function start() {
+  const inputId = ui.input.value;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         // These three add processing delay and mangle harmonics; a tuner wants raw input.
         echoCancellation: false, noiseSuppression: false, autoGainControl: false,
-        channelCount: 1,
+        // Ask for both channels of an interface so one side can be chosen.
+        channelCount: { ideal: 2 },
+        ...(inputId ? { deviceId: { exact: inputId } } : {}),
       },
     });
   } catch (err) {
     ui.status.textContent = `Microphone unavailable: ${err.message}`;
     return;
   }
+  await refreshDevices(); // labels are available now that permission is granted
+  const settings = stream.getAudioTracks()[0].getSettings();
+  ui.channelwrap.hidden = !(settings.channelCount > 1);
+
   audio = new AudioContext({ latencyHint: "interactive" });
+  if (canPickOutput && ui.output.value) {
+    try { await audio.setSinkId(ui.output.value); } catch (err) { ui.status.textContent = `Output unavailable: ${err.message}`; }
+  }
   await audio.audioWorklet.addModule("./capture-processor.js");
   const source = audio.createMediaStreamSource(stream);
   const node = new AudioWorkletNode(audio, "capture-processor", { numberOfOutputs: 0 });
   source.connect(node);
+  captureNode = node;
+  node.port.postMessage({ channel: Number(ui.channel.value) });
 
   // Worklet -> worker channel, bypassing the main thread entirely.
   const channel = new MessageChannel();
@@ -178,7 +251,7 @@ function stop() {
   worker.postMessage({ type: "stop" });
   if (stream) stream.getTracks().forEach((t) => t.stop());
   if (audio) audio.close();
-  stream = audio = latest = display = smoothedMidi = shownMidi = null;
+  stream = audio = captureNode = latest = display = smoothedMidi = shownMidi = null;
   ui.start.textContent = "Start";
   ui.start.classList.remove("on");
   ui.status.textContent = "Stopped.";
@@ -273,7 +346,9 @@ function renderTab(trackIndex) {
   if (!tabScore || !alphaTab) return;
   if (!tabApi) {
     tabApi = new alphaTab.AlphaTabApi($("tab"), {
-      core: { fontDirectory: `${ALPHATAB_DIR}font/`, useWorkers: false, engine: "svg" },
+      // No lazy loading: it only fills in SVG for parts scrolled into view,
+      // and a single track is cheap to render whole.
+      core: { fontDirectory: `${ALPHATAB_DIR}font/`, useWorkers: false, engine: "svg", enableLazyLoading: false },
       display: { layoutMode: "horizontal", scale: 0.85, staveProfile: "tab" },
       player: { enablePlayer: false },
     });
