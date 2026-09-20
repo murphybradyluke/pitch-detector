@@ -203,7 +203,7 @@ try {
       const result = await b.text("#songinfo");
       console.log(`  ${result}; cursor at ${cursorX}px mid-song`);
       for (const err of b.errors) console.log("  error:", err);
-      if (!/^Bass \(5 notes/.test(trackLabel)) fail(`bass track not selected by name: ${trackLabel}`);
+      if (!/^Bass \(.*5 notes/.test(trackLabel)) fail(`bass track not selected by name: ${trackLabel}`);
       if (!/4 of 5 notes/.test(result)) fail("expected 4 of 5 notes");
       if (!(cursorX > 0)) fail("tab cursor did not move");
       if (b.errors.length) failed = true;

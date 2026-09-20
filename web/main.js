@@ -253,7 +253,8 @@ async function loadGuitarPro(name, bytes) {
     const midi = midiFile.toBinary();
     const trackNames = tabScore.tracks.map((t) => t.name || `Track ${t.index + 1}`);
     const title = tabScore.title ? `${name} (${tabScore.title})` : name;
-    worker.postMessage({ type: "load_song", name: title, bytes: midi.buffer, trackNames }, [midi.buffer]);
+    // No channel splitting: alphaTab puts a track's bent notes on a second channel.
+    worker.postMessage({ type: "load_song", name: title, bytes: midi.buffer, trackNames, splitChannels: false }, [midi.buffer]);
   } catch (err) {
     tabScore = null;
     ui.songinfo.textContent = `Could not read Guitar Pro file: ${err.message || err}`;
@@ -334,7 +335,8 @@ function onSongLoaded(msg) {
   for (const t of usable) {
     const opt = document.createElement("option");
     opt.value = t.index;
-    opt.textContent = `${t.name} (${t.noteCount} notes, ${noteName(t.lowestMidi)}–${noteName(t.highestMidi)})`;
+    const instrument = t.programName && !t.name.includes(t.programName) ? `${t.programName}, ` : "";
+    opt.textContent = `${t.name} (${instrument}${t.noteCount} notes, ${noteName(t.lowestMidi)}–${noteName(t.highestMidi)})`;
     ui.track.appendChild(opt);
   }
   ui.track.disabled = false;
@@ -425,19 +427,30 @@ function click(at, accent) {
   osc.stop(at + 0.05);
 }
 
+// Bass fundamentals (30-100 Hz) are below what a phone speaker can
+// reproduce, so a pure tone is inaudible there. A sawtooth carries strong
+// harmonics and the ear hears the pitch from those; a lowpass keeps it from
+// being harsh. Plucked envelope: quick attack, exponential decay, short release.
 function playNote(midi, at, dur) {
   if (!ui.hear.checked) return;
   const a4 = Number(ui.a4.value) || 440;
+  const f = a4 * Math.pow(2, (midi - 69) / 12);
   const osc = audio.createOscillator();
+  const filter = audio.createBiquadFilter();
   const gain = audio.createGain();
-  osc.type = "triangle";
-  osc.frequency.value = a4 * Math.pow(2, (midi - 69) / 12);
-  const end = at + Math.max(0.05, dur - 0.02);
+  osc.type = "sawtooth";
+  osc.frequency.value = f;
+  filter.type = "lowpass";
+  filter.Q.value = 1;
+  filter.frequency.setValueAtTime(Math.min(6000, f * 24), at);
+  filter.frequency.exponentialRampToValueAtTime(Math.max(300, f * 6), at + 0.25);
+  const end = at + Math.max(0.06, dur - 0.015);
   gain.gain.setValueAtTime(0.0001, at);
-  gain.gain.exponentialRampToValueAtTime(0.25, at + 0.01);
-  gain.gain.setValueAtTime(0.25, Math.max(at + 0.01, end - 0.03));
+  gain.gain.exponentialRampToValueAtTime(0.5, at + 0.006);
+  gain.gain.exponentialRampToValueAtTime(0.18, at + Math.min(0.4, Math.max(0.05, dur * 0.6)));
+  gain.gain.setValueAtTime(0.18, Math.max(at + 0.006, end - 0.02));
   gain.gain.exponentialRampToValueAtTime(0.0001, end);
-  osc.connect(gain).connect(audio.destination);
+  osc.connect(filter).connect(gain).connect(audio.destination);
   osc.start(at);
   osc.stop(end + 0.01);
 }

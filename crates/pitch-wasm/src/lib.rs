@@ -114,7 +114,11 @@ use pitch_song::{monophonic, MidiSong, NoteEvent, Scorer, ScorerOptions};
 #[derive(Debug, Clone)]
 pub struct TrackInfo {
     pub index: usize,
+    pub midi_track: usize,
+    pub channel: u8,
     pub name: String,
+    /// General MIDI instrument name, "Drums", or empty.
+    pub program_name: String,
     pub note_count: usize,
     pub lowest_midi: u8,
     pub highest_midi: u8,
@@ -131,9 +135,13 @@ pub struct Song {
 
 #[wasm_bindgen]
 impl Song {
+    /// `split_channels` (default true) lists one part per channel per track,
+    /// which keeps drums apart from the bass in single-track files. Pass
+    /// false for MIDI generated from Guitar Pro, where a track's bent notes
+    /// live on a second channel.
     #[wasm_bindgen(constructor)]
-    pub fn new(bytes: &[u8]) -> Result<Song, JsError> {
-        MidiSong::parse(bytes)
+    pub fn new(bytes: &[u8], split_channels: Option<bool>) -> Result<Song, JsError> {
+        MidiSong::parse_with(bytes, split_channels.unwrap_or(true))
             .map(|inner| Song { inner })
             .map_err(|e| JsError::new(&e.to_string()))
     }
@@ -144,7 +152,10 @@ impl Song {
             .iter()
             .map(|t| TrackInfo {
                 index: t.index,
+                midi_track: t.midi_track,
+                channel: t.channel,
                 name: t.name.clone(),
+                program_name: t.program_name().to_string(),
                 note_count: t.note_count,
                 lowest_midi: t.lowest_midi,
                 highest_midi: t.highest_midi,

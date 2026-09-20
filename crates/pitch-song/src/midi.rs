@@ -29,21 +29,77 @@ impl fmt::Display for MidiError {
 
 impl std::error::Error for MidiError {}
 
-/// Summary of one track, for a track picker.
+/// Summary of one part, for a track picker.
+///
+/// A part is one MIDI channel within one MIDI track. Format-1 files usually
+/// have one channel per track, so parts and tracks coincide. Format-0 files
+/// put every instrument in a single track, and splitting by channel is what
+/// keeps the drums (channel 10, whose kick sits below any bass note) from
+/// being mistaken for the lowest note of the bass line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackInfo {
+    /// Index into [`MidiSong::tracks`] and the argument to [`MidiSong::events`].
     pub index: usize,
+    /// MIDI track this part came from.
+    pub midi_track: usize,
+    /// MIDI channel, 0-based (9 is percussion).
+    pub channel: u8,
+    /// Track name from the file, with the instrument appended when a track
+    /// holds several channels.
     pub name: String,
     pub note_count: usize,
     pub lowest_midi: u8,
     pub highest_midi: u8,
-    /// General MIDI program number of the first program change, if any.
+    /// General MIDI program number of the first program change on this channel.
     pub program: Option<u8>,
-    /// True when every note is on channel 10 (percussion).
+    /// True for channel 10 (percussion).
     pub is_drums: bool,
 }
 
-/// A parsed MIDI file: tempo map plus per-track note events.
+impl TrackInfo {
+    /// General MIDI name of the program, or "Drums" for the percussion channel.
+    pub fn program_name(&self) -> &'static str {
+        if self.is_drums {
+            "Drums"
+        } else {
+            self.program.map(gm_program_name).unwrap_or("")
+        }
+    }
+}
+
+/// General MIDI level 1 program names, indexed by program number.
+pub fn gm_program_name(program: u8) -> &'static str {
+    GM_PROGRAMS.get(program as usize).copied().unwrap_or("")
+}
+
+#[rustfmt::skip]
+const GM_PROGRAMS: [&str; 128] = [
+    "Acoustic Grand Piano", "Bright Acoustic Piano", "Electric Grand Piano", "Honky-tonk Piano",
+    "Electric Piano 1", "Electric Piano 2", "Harpsichord", "Clavinet",
+    "Celesta", "Glockenspiel", "Music Box", "Vibraphone", "Marimba", "Xylophone", "Tubular Bells", "Dulcimer",
+    "Drawbar Organ", "Percussive Organ", "Rock Organ", "Church Organ", "Reed Organ", "Accordion", "Harmonica", "Tango Accordion",
+    "Acoustic Guitar (nylon)", "Acoustic Guitar (steel)", "Electric Guitar (jazz)", "Electric Guitar (clean)",
+    "Electric Guitar (muted)", "Overdriven Guitar", "Distortion Guitar", "Guitar Harmonics",
+    "Acoustic Bass", "Electric Bass (finger)", "Electric Bass (pick)", "Fretless Bass",
+    "Slap Bass 1", "Slap Bass 2", "Synth Bass 1", "Synth Bass 2",
+    "Violin", "Viola", "Cello", "Contrabass", "Tremolo Strings", "Pizzicato Strings", "Orchestral Harp", "Timpani",
+    "String Ensemble 1", "String Ensemble 2", "Synth Strings 1", "Synth Strings 2",
+    "Choir Aahs", "Voice Oohs", "Synth Voice", "Orchestra Hit",
+    "Trumpet", "Trombone", "Tuba", "Muted Trumpet", "French Horn", "Brass Section", "Synth Brass 1", "Synth Brass 2",
+    "Soprano Sax", "Alto Sax", "Tenor Sax", "Baritone Sax", "Oboe", "English Horn", "Bassoon", "Clarinet",
+    "Piccolo", "Flute", "Recorder", "Pan Flute", "Blown Bottle", "Shakuhachi", "Whistle", "Ocarina",
+    "Lead 1 (square)", "Lead 2 (sawtooth)", "Lead 3 (calliope)", "Lead 4 (chiff)",
+    "Lead 5 (charang)", "Lead 6 (voice)", "Lead 7 (fifths)", "Lead 8 (bass + lead)",
+    "Pad 1 (new age)", "Pad 2 (warm)", "Pad 3 (polysynth)", "Pad 4 (choir)",
+    "Pad 5 (bowed)", "Pad 6 (metallic)", "Pad 7 (halo)", "Pad 8 (sweep)",
+    "FX 1 (rain)", "FX 2 (soundtrack)", "FX 3 (crystal)", "FX 4 (atmosphere)",
+    "FX 5 (brightness)", "FX 6 (goblins)", "FX 7 (echoes)", "FX 8 (sci-fi)",
+    "Sitar", "Banjo", "Shamisen", "Koto", "Kalimba", "Bag pipe", "Fiddle", "Shanai",
+    "Tinkle Bell", "Agogo", "Steel Drums", "Woodblock", "Taiko Drum", "Melodic Tom", "Synth Drum", "Reverse Cymbal",
+    "Guitar Fret Noise", "Breath Noise", "Seashore", "Bird Tweet", "Telephone Ring", "Helicopter", "Applause", "Gunshot",
+];
+
+/// A parsed MIDI file: tempo map plus note events per part.
 #[derive(Debug, Clone)]
 pub struct MidiSong {
     ticks_per_beat: u16,
@@ -55,7 +111,16 @@ pub struct MidiSong {
 }
 
 impl MidiSong {
+    /// Parse, splitting each MIDI track into one part per channel.
     pub fn parse(bytes: &[u8]) -> Result<MidiSong, MidiError> {
+        Self::parse_with(bytes, true)
+    }
+
+    /// Parse with control over channel splitting. Turn it off for files
+    /// where one instrument deliberately spans channels, such as the MIDI
+    /// alphaTab generates from Guitar Pro (bent notes go to a second
+    /// channel of the same track).
+    pub fn parse_with(bytes: &[u8], split_channels: bool) -> Result<MidiSong, MidiError> {
         let smf = Smf::parse(bytes).map_err(|e| MidiError::Parse(e.to_string()))?;
         let ticks_per_beat = match smf.header.timing {
             Timing::Metrical(t) => t.as_int(),
@@ -88,13 +153,15 @@ impl MidiSong {
             end_tick,
         };
 
-        // Pass 2: notes per track.
+        // Pass 2: notes per track, split by channel into parts.
         let mut tracks = Vec::new();
         let mut events = Vec::new();
-        for (index, track) in smf.tracks.iter().enumerate() {
-            let (info, notes) = song.read_track(index, track);
-            tracks.push(info);
-            events.push(notes);
+        for (midi_track, track) in smf.tracks.iter().enumerate() {
+            for (mut info, notes) in song.read_track(midi_track, track, split_channels) {
+                info.index = tracks.len();
+                tracks.push(info);
+                events.push(notes);
+            }
         }
         Ok(MidiSong {
             tracks,
@@ -103,13 +170,19 @@ impl MidiSong {
         })
     }
 
-    fn read_track(&self, index: usize, track: &[midly::TrackEvent]) -> (TrackInfo, Vec<NoteEvent>) {
+    /// Notes of one MIDI track, grouped by channel (or all together when
+    /// `split_channels` is false). Tracks without notes yield nothing.
+    fn read_track(
+        &self,
+        midi_track: usize,
+        track: &[midly::TrackEvent],
+        split_channels: bool,
+    ) -> Vec<(TrackInfo, Vec<NoteEvent>)> {
         let mut tick = 0u32;
         let mut name = String::new();
-        let mut program = None;
+        let mut programs: HashMap<u8, u8> = HashMap::new();
         let mut open: HashMap<(u8, u8), (u32, u8)> = HashMap::new();
-        let mut notes = Vec::new();
-        let mut channels_seen = [false; 16];
+        let mut notes: Vec<(u8, NoteEvent)> = Vec::new();
 
         for ev in track {
             tick += ev.delta.as_int();
@@ -123,22 +196,19 @@ impl MidiSong {
                 TrackEventKind::Midi { channel, message } => {
                     let ch = channel.as_int();
                     match message {
-                        MidiMessage::ProgramChange { program: p } => {
-                            if program.is_none() {
-                                program = Some(p.as_int());
-                            }
+                        MidiMessage::ProgramChange { program } => {
+                            programs.entry(ch).or_insert(program.as_int());
                         }
                         MidiMessage::NoteOn { key, vel } if vel.as_int() > 0 => {
-                            channels_seen[ch as usize] = true;
                             // A retriggered key ends the previous note.
                             if let Some((start, v)) = open.remove(&(ch, key.as_int())) {
-                                notes.push(self.note(key.as_int(), start, tick, v));
+                                notes.push((ch, self.note(key.as_int(), start, tick, v)));
                             }
                             open.insert((ch, key.as_int()), (tick, vel.as_int()));
                         }
                         MidiMessage::NoteOn { key, .. } | MidiMessage::NoteOff { key, .. } => {
                             if let Some((start, v)) = open.remove(&(ch, key.as_int())) {
-                                notes.push(self.note(key.as_int(), start, tick, v));
+                                notes.push((ch, self.note(key.as_int(), start, tick, v)));
                             }
                         }
                         _ => {}
@@ -147,31 +217,70 @@ impl MidiSong {
                 _ => {}
             }
         }
-        for ((_, key), (start, v)) in open {
-            notes.push(self.note(key, start, tick, v));
+        for ((ch, key), (start, v)) in open {
+            notes.push((ch, self.note(key, start, tick, v)));
         }
-        notes.sort_by(|a, b| {
-            a.start_secs
-                .partial_cmp(&b.start_secs)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
 
-        let only_drums =
-            channels_seen[9] && channels_seen.iter().enumerate().all(|(c, &s)| !s || c == 9);
-        let info = TrackInfo {
-            index,
-            name: if name.is_empty() {
-                format!("Track {}", index + 1)
-            } else {
-                name
-            },
-            note_count: notes.len(),
-            lowest_midi: notes.iter().map(|n| n.midi).min().unwrap_or(0),
-            highest_midi: notes.iter().map(|n| n.midi).max().unwrap_or(0),
-            program,
-            is_drums: only_drums && !notes.is_empty(),
+        let mut channels: Vec<u8> = notes.iter().map(|(ch, _)| *ch).collect();
+        channels.sort_unstable();
+        channels.dedup();
+        let multi = split_channels && channels.len() > 1;
+        // Without splitting, the whole track is one part labelled by its
+        // most-used channel, and it is drums only if every note is drums.
+        let groups: Vec<(u8, bool)> = if split_channels {
+            channels.iter().map(|&ch| (ch, ch == 9)).collect()
+        } else if channels.is_empty() {
+            Vec::new()
+        } else {
+            let main = *channels
+                .iter()
+                .max_by_key(|&&ch| notes.iter().filter(|(c, _)| *c == ch).count())
+                .unwrap();
+            vec![(main, channels.iter().all(|&ch| ch == 9))]
         };
-        (info, notes)
+
+        groups
+            .into_iter()
+            .map(|(ch, is_drums)| {
+                let mut part: Vec<NoteEvent> = notes
+                    .iter()
+                    .filter(|(c, _)| !split_channels || *c == ch)
+                    .map(|(_, n)| *n)
+                    .collect();
+                part.sort_by(|a, b| {
+                    a.start_secs
+                        .partial_cmp(&b.start_secs)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                let mut info = TrackInfo {
+                    index: 0,
+                    midi_track,
+                    channel: ch,
+                    name: String::new(),
+                    note_count: part.len(),
+                    lowest_midi: part.iter().map(|n| n.midi).min().unwrap_or(0),
+                    highest_midi: part.iter().map(|n| n.midi).max().unwrap_or(0),
+                    program: programs.get(&ch).copied(),
+                    is_drums,
+                };
+                let base = if name.is_empty() {
+                    format!("Track {}", midi_track + 1)
+                } else {
+                    name.clone()
+                };
+                info.name = if multi {
+                    let instrument = info.program_name();
+                    if instrument.is_empty() {
+                        format!("{base} ch{}", ch + 1)
+                    } else {
+                        format!("{base} · {instrument}")
+                    }
+                } else {
+                    base
+                };
+                (info, part)
+            })
+            .collect()
     }
 
     fn note(&self, midi: u8, start_tick: u32, end_tick: u32, velocity: u8) -> NoteEvent {
@@ -195,11 +304,12 @@ impl MidiSong {
         s0 + (tick - t0) as f64 * uspb as f64 / 1e6 / self.ticks_per_beat as f64
     }
 
+    /// Parts (one per channel per MIDI track) that contain notes.
     pub fn tracks(&self) -> &[TrackInfo] {
         &self.tracks
     }
 
-    /// Raw (possibly polyphonic) notes of a track.
+    /// Raw (possibly polyphonic) notes of a part, by [`TrackInfo::index`].
     pub fn events(&self, track: usize) -> &[NoteEvent] {
         self.events.get(track).map(Vec::as_slice).unwrap_or(&[])
     }

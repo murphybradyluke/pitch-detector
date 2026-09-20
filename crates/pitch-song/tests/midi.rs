@@ -78,16 +78,19 @@ fn bass_file(bpm: u32) -> Vec<u8> {
 #[test]
 fn parses_a_bass_line_with_names_and_timing() {
     let song = MidiSong::parse(&bass_file(120)).unwrap();
-    assert_eq!(song.tracks().len(), 2);
-    let bass = &song.tracks()[1];
+    // The tempo track has no notes, so only the bass part is listed.
+    assert_eq!(song.tracks().len(), 1);
+    let bass = &song.tracks()[0];
     assert_eq!(bass.name, "Bass");
+    assert_eq!((bass.midi_track, bass.channel), (1, 1));
+    assert_eq!(bass.program_name(), "Electric Bass (finger)");
     assert_eq!(bass.note_count, 4);
     assert_eq!((bass.lowest_midi, bass.highest_midi), (28, 43));
     assert_eq!(bass.program, Some(33));
     assert!(!bass.is_drums);
     assert!((song.initial_bpm() - 120.0).abs() < 1e-3);
 
-    let ev = song.events(1);
+    let ev = song.events(0);
     let starts: Vec<f32> = ev.iter().map(|e| e.start_secs).collect();
     assert_eq!(starts, vec![0.0, 0.5, 1.0, 1.5]);
     assert!(ev.iter().all(|e| (e.duration_secs - 0.5).abs() < 1e-6));
@@ -115,7 +118,7 @@ fn tempo_changes_mid_song_are_honoured() {
         meta(0, MetaMessage::EndOfTrack),
     ]);
     let song = MidiSong::parse(&write(&smf)).unwrap();
-    let ev = song.events(1);
+    let ev = song.events(0);
     assert!((ev[0].duration_secs - 0.5).abs() < 1e-6);
     assert!((ev[1].start_secs - 0.5).abs() < 1e-6);
     assert!((ev[1].duration_secs - 1.0).abs() < 1e-6);
@@ -138,6 +141,102 @@ fn note_on_with_zero_velocity_ends_a_note_and_drums_are_flagged() {
     let song = MidiSong::parse(&write(&smf)).unwrap();
     assert!(song.tracks()[0].is_drums);
     assert!((song.events(0)[0].duration_secs - 0.25).abs() < 1e-6);
+}
+
+#[test]
+fn format_0_file_is_split_by_channel_so_drums_do_not_swallow_the_bass() {
+    // One track holding a piano chord (ch 0), a bass line (ch 1) and a kick
+    // drum (ch 9) all starting together. Before channel splitting, the kick
+    // at MIDI 36 was the "lowest note of the chord" and the bass vanished.
+    let mut smf = Smf::new(Header::new(
+        Format::SingleTrack,
+        Timing::Metrical(u15::new(TPB)),
+    ));
+    let mut t = vec![meta(0, MetaMessage::TrackName(b"Song"))];
+    for (ch, prog) in [(0u8, 0u8), (1, 34)] {
+        t.push(TrackEvent {
+            delta: u28::new(0),
+            kind: TrackEventKind::Midi {
+                channel: u4::new(ch),
+                message: MidiMessage::ProgramChange {
+                    program: u7::new(prog),
+                },
+            },
+        });
+    }
+    for beat in 0..4u32 {
+        let bass_key = 28 + beat as u8 * 5;
+        t.push(note_on(0, 0, 60, 80));
+        t.push(note_on(0, 0, 64, 80));
+        t.push(note_on(0, 1, bass_key, 100));
+        t.push(note_on(0, 9, 36, 110));
+        t.push(note_off(TPB as u32 / 2, 9, 36));
+        t.push(note_off(TPB as u32 / 2, 0, 60));
+        t.push(note_off(0, 0, 64));
+        t.push(note_off(0, 1, bass_key));
+    }
+    t.push(meta(0, MetaMessage::EndOfTrack));
+    smf.tracks.push(t);
+    let song = MidiSong::parse(&write(&smf)).unwrap();
+
+    let parts: Vec<(u8, &str, usize, bool)> = song
+        .tracks()
+        .iter()
+        .map(|p| (p.channel, p.name.as_str(), p.note_count, p.is_drums))
+        .collect();
+    assert_eq!(
+        parts,
+        vec![
+            (0, "Song · Acoustic Grand Piano", 8, false),
+            (1, "Song · Electric Bass (pick)", 4, false),
+            (9, "Song · Drums", 4, true),
+        ]
+    );
+    let bass = song.events(1);
+    assert_eq!(
+        bass.iter().map(|e| e.midi).collect::<Vec<_>>(),
+        vec![28, 33, 38, 43]
+    );
+    assert_eq!(
+        monophonic(bass, 0.03).len(),
+        4,
+        "every bass note survives reduction"
+    );
+}
+
+#[test]
+fn without_splitting_a_two_channel_track_stays_one_part() {
+    // Like alphaTab's output: a bass track whose bent note sits on channel 1.
+    let mut smf = Smf::new(Header::new(
+        Format::Parallel,
+        Timing::Metrical(u15::new(TPB)),
+    ));
+    smf.tracks.push(vec![
+        meta(0, MetaMessage::TrackName(b"Bass")),
+        note_on(0, 0, 28, 100),
+        note_off(TPB as u32, 0, 28),
+        note_on(0, 1, 33, 100),
+        note_off(TPB as u32, 1, 33),
+        note_on(0, 0, 38, 100),
+        note_off(TPB as u32, 0, 38),
+        meta(0, MetaMessage::EndOfTrack),
+    ]);
+    let bytes = write(&smf);
+    let split = MidiSong::parse(&bytes).unwrap();
+    assert_eq!(split.tracks().len(), 2);
+    let whole = MidiSong::parse_with(&bytes, false).unwrap();
+    assert_eq!(whole.tracks().len(), 1);
+    assert_eq!(whole.tracks()[0].name, "Bass");
+    assert_eq!(
+        whole.tracks()[0].channel,
+        0,
+        "labelled by the busier channel"
+    );
+    assert!(!whole.tracks()[0].is_drums);
+    assert_eq!(
+        whole.events(0).iter().map(|e| e.midi).collect::<Vec<_>>(),
+        vec![28, 33, 38]
+    );
 }
 
 #[test]

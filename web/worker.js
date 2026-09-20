@@ -70,11 +70,12 @@ onmessage = async (e) => {
       if (song) song.free();
       song = null;
       try {
-        song = new Song(new Uint8Array(msg.bytes));
+        song = new Song(new Uint8Array(msg.bytes), msg.splitChannels !== false);
         const names = msg.trackNames || [];
         const tracks = song.tracks().map((t) => {
           const r = {
-            index: t.index, name: names[t.index] || t.name, noteCount: t.note_count,
+            index: t.index, midiTrack: t.midi_track, channel: t.channel,
+            name: names[t.midi_track] || t.name, programName: t.program_name, noteCount: t.note_count,
             lowestMidi: t.lowest_midi, highestMidi: t.highest_midi, program: t.program, isDrums: t.is_drums,
           };
           t.free();

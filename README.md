@@ -74,6 +74,15 @@ headphones for that, or the mic scores the synth.
   100 ms of latency.
 - **Tempo changes** anywhere in the file are honoured; SMPTE-timed files are
   not supported.
+- **Parts, not tracks.** Each MIDI track is split into one part per channel,
+  labelled with its General MIDI instrument. Single-track (format 0) files
+  put every instrument together, and without the split the kick drum at
+  MIDI 36 was the "lowest note" of every chord and the bass line vanished.
+  Guitar Pro conversions skip the split, since alphaTab puts a track's bent
+  notes on a second channel.
+- **"Hear the part"** is a filtered sawtooth with a plucked envelope. Bass
+  fundamentals are below what phone speakers reproduce; the harmonics carry
+  the pitch.
 - **Guitar Pro** files go through [alphaTab](https://alphatab.net) in the
   browser: it parses the score, generates a standard MIDI file from it (one
   MIDI track per score track, bends as pitch bends) and that file takes the

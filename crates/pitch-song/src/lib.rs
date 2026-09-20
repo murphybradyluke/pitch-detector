@@ -12,7 +12,7 @@
 pub mod midi;
 pub mod scorer;
 
-pub use midi::{MidiSong, TrackInfo};
+pub use midi::{gm_program_name, MidiSong, TrackInfo};
 pub use scorer::{NoteOutcome, Scorer, ScorerOptions};
 
 /// One target note.
